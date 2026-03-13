@@ -1,108 +1,86 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 import io
 import math
 
-# --- 1. BASES DE DATOS INTEGRADAS (NOM-001-SEDE / IPCEA) ---
-TABLA_NEMA_3F_460V = {1.0: 1.8, 2.0: 3.4, 3.0: 4.8, 5.0: 7.6, 7.5: 11.0, 10.0: 14.0, 15.0: 21.0, 20.0: 27.0, 25.0: 34.0, 30.0: 40.0, 40.0: 52.0, 50.0: 65.0, 60.0: 77.0, 75.0: 96.0, 100.0: 124.0, 125.0: 156.0, 150.0: 180.0}
-TABLA_COBRE_75 = {"14 AWG": 15, "12 AWG": 20, "10 AWG": 30, "8 AWG": 50, "6 AWG": 65, "4 AWG": 85, "2 AWG": 115, "1/0": 150, "2/0": 175, "3/0": 200, "4/0": 230, "250 kcmil": 255, "300 kcmil": 285, "350 kcmil": 310, "400 kcmil": 335, "500 kcmil": 380}
-RES_OHM_KM = {"14 AWG": 10.2, "12 AWG": 6.6, "10 AWG": 3.9, "8 AWG": 2.5, "6 AWG": 1.6, "4 AWG": 1.0, "2 AWG": 0.62, "1/0": 0.39, "2/0": 0.31, "3/0": 0.25, "4/0": 0.20, "250 kcmil": 0.17, "300 kcmil": 0.15, "350 kcmil": 0.13, "400 kcmil": 0.11, "500 kcmil": 0.089}
-AREAS_MM2_CC = {"1/0": 53.49, "2/0": 67.43, "3/0": 85.01, "4/0": 107.2, "250 kcmil": 126.7, "300 kcmil": 152.0, "350 kcmil": 177.3, "400 kcmil": 202.7, "500 kcmil": 253.4}
-AREAS_EXT_NOM = {"14 AWG": 8.9, "12 AWG": 11.6, "10 AWG": 15.6, "8 AWG": 28.1, "6 AWG": 46.9, "4 AWG": 62.7, "2 AWG": 85.9, "1/0": 143.4, "2/0": 175.4, "3/0": 214.3, "4/0": 263.4, "250 kcmil": 320.5, "500 kcmil": 582.4}
+# --- 1. BASE DE DATOS TÉCNICA OKONITE C-L-X (Cu/Al) ---
+# Datos: Ampacidades (60/75/90°C), Diámetro Exterior (mm) y Área Transversal (mm2)
+DATOS_OKONITE = {
+    "14 AWG": {"60C": 15, "75C": 20, "90C": 25, "area": 206, "od": 16.3},
+    "12 AWG": {"60C": 20, "75C": 20, "90C": 30, "area": 239, "od": 17.5},
+    "10 AWG": {"60C": 30, "75C": 30, "90C": 40, "area": 271, "od": 18.6},
+    "8 AWG":  {"60C": 40, "75C": 50, "90C": 55, "area": 329, "od": 20.6},
+    "6 AWG":  {"60C": 55, "75C": 65, "90C": 75, "area": 413, "od": 22.9},
+    "4 AWG":  {"60C": 70, "75C": 85, "90C": 95, "area": 497, "od": 25.1},
+    "2 AWG":  {"60C": 95, "75C": 115, "90C": 130, "area": 645, "od": 28.7},
+    "1/0":    {"60C": 125, "75C": 150, "90C": 170, "area": 994, "od": 35.6},
+    "2/0":    {"60C": 145, "75C": 175, "90C": 195, "area": 1103, "od": 37.6},
+    "3/0":    {"60C": 165, "75C": 200, "90C": 225, "area": 1265, "od": 40.1},
+    "4/0":    {"60C": 195, "75C": 230, "90C": 260, "area": 1516, "od": 44.0},
+    "250 kcmil": {"60C": 215, "75C": 255, "90C": 290, "area": 1774, "od": 47.5},
+    "350 kcmil": {"60C": 260, "75C": 310, "90C": 350, "area": 2213, "od": 53.0},
+    "500 kcmil": {"60C": 320, "75C": 380, "90C": 430, "area": 2761, "od": 59.3}
+}
 
-# Peralte 4" (101.6 mm). Anchos en pulgadas: mm2 de área total interna
+# Resistencias para Caída de Tensión (Ohm/km - Cobre)
+RES_CU = {"14 AWG": 10.2, "12 AWG": 6.6, "10 AWG": 3.9, "8 AWG": 2.5, "6 AWG": 1.6, "4 AWG": 1.0, "2 AWG": 0.62, "1/0": 0.39, "2/0": 0.31, "3/0": 0.25, "4/0": 0.20, "250 kcmil": 0.17, "350 kcmil": 0.13, "500 kcmil": 0.089}
+
+# Áreas útiles charolas Peralte 4" (mm2) - Límite NOM 40%
 ANCHOS_CHAROLA_4IN = {6: 15484, 9: 23226, 12: 30968, 18: 46451, 24: 61935, 30: 77419, 36: 92903}
 
 st.set_page_config(page_title="SOCEMB Engineering Pro", layout="wide")
 
-if 'lista_circuitos' not in st.session_state:
-    st.session_state.lista_circuitos = []
+if 'db' not in st.session_state:
+    st.session_state.db = []
 
-st.title("⚡ SOCEMB: Ingeniería Eléctrica Integral")
+st.title("⚡ SOCEMB: Ingeniería Eléctrica Integral (NOM-001 / Okonite C-L-X)")
 
-# --- 2. CAPTURA DE DATOS ---
+# --- 2. ENTRADA DE DATOS (SIDEBAR) ---
 with st.sidebar:
-    st.header("📋 Identificación")
-    c_tag = st.text_input("Tag del Circuito", "M-101")
-    c_charola = st.text_input("ID Charola Origen", "CH-A-01")
-    c_desc = st.text_input("Descripción", "Motor de Proceso")
+    st.header("📋 Datos del Proyecto")
+    tag = st.text_input("Tag del Circuito", "M-101")
+    charola_id = st.text_input("ID Charola", "CH-A-01")
     
-    st.header("⚙️ Parámetros de Carga")
-    tipo_p = st.selectbox("Unidad", ["HP (NEMA)", "kW", "kVA"])
-    if tipo_p == "HP (NEMA)":
-        val_p = st.selectbox("Valor HP", sorted(TABLA_NEMA_3F_460V.keys()), index=5)
-        i_nom = TABLA_NEMA_3F_460V[val_p] * (460/460) # Ajuste base 460V
-    else:
-        val_p = st.number_input("Valor", value=10.0)
-        v_sel = st.selectbox("Voltaje (V)", [220, 440, 460, 480], index=2)
-        i_nom = (val_p * 1000) / (v_sel * 1.732) if tipo_p == "kVA" else (val_p * 1000) / (v_sel * 1.732 * 0.85)
-
-    v_final = 460 if tipo_p == "HP (NEMA)" else v_sel
+    st.header("⚙️ Parámetros Eléctricos")
+    hp = st.number_input("Potencia (HP)", value=10.0)
+    v = st.selectbox("Voltaje (V)", [220, 440, 460, 480], index=2)
     dist = st.number_input("Longitud (m)", value=50)
-
-    st.header("🛡️ Corto Circuito")
-    i_falla = st.number_input("I de Falla (kA)", value=10.0)
-    t_falla = st.number_input("Tiempo (seg)", value=0.016, format="%.3f")
-
-# --- 3. PROCESO DE CÁLCULO ---
-i_dis = (i_nom * 1.25) / 0.85 # Factor Charola
-cal_base = next((c for c in list(TABLA_COBRE_75.keys()) if i_dis <= TABLA_COBRE_75[c]), "500 kcmil")
-
-# Caída de Tensión
-cal_final = cal_base
-for cal in list(TABLA_COBRE_75.keys())[list(TABLA_COBRE_75.keys()).index(cal_base):]:
-    vd = (1.732 * i_nom * dist * RES_OHM_KM.get(cal, 0.089)) / (v_final * 10)
-    cal_final = cal
-    if vd <= 3.0: break
-
-# Corto Circuito (1/0 en adelante)
-status_cc = "N/A"
-if cal_final in AREAS_MM2_CC:
-    i_soporta = (0.094 * AREAS_MM2_CC[cal_final]) / math.sqrt(t_falla)
-    if i_falla > i_soporta:
-        for c_cc in list(TABLA_COBRE_75.keys())[list(TABLA_COBRE_75.keys()).index(cal_final):]:
-            if c_cc in AREAS_MM2_CC:
-                if ((0.094 * AREAS_MM2_CC[c_cc]) / math.sqrt(t_falla)) >= i_falla:
-                    cal_final = c_cc
-                    status_cc = "✅ Ajustado por CC"
-                    break
-    else: status_cc = "✅ OK"
-
-area_cable = AREAS_EXT_NOM.get(cal_final, 500) * 4 # 3F + T
-
-# --- 4. RESULTADOS Y ACCIONES ---
-st.info(f"Análisis: **{c_tag}** | {c_desc}")
-col_res = st.columns(3)
-col_res[0].metric("Calibre", cal_final)
-col_res[1].metric("VD %", f"{round(vd, 2)}%")
-col_res[2].metric("CC Status", status_cc)
-
-if st.button("➕ Agregar al Cable Schedule"):
-    st.session_state.lista_circuitos.append({
-        "TAG": c_tag, "CHAROLA": c_charola, "DESCRIPCIÓN": c_desc,
-        "CALIBRE": cal_final, "I NOM": round(i_nom, 2), "VD%": round(vd, 2),
-        "CC STATUS": status_cc, "ÁREA (mm2)": round(area_cable, 2)
-    })
-
-# --- 5. REPORTES ---
-if st.session_state.lista_circuitos:
-    df = pd.DataFrame(st.session_state.lista_circuitos)
-    st.subheader("📊 Memoria de Charolas (Peralte 4\")")
-    rep = df.groupby("CHAROLA")["ÁREA (mm2)"].sum().reset_index()
     
-    def nom_check(a):
-        for pulg, a_max in ANCHOS_CHAROLA_4IN.items():
-            if a <= (a_max * 0.40): return f"{pulg}\" ({pulg*25.4} mm)", f"{round((a/(a_max*0.4))*100,1)}%"
-        return "SOBRESATURADA", "100%+"
+    st.header("🌍 Condiciones de Instalación (Derating)")
+    temp_amb = st.select_slider("Temp. Ambiente (°C)", options=[30, 35, 40, 45, 50], value=30)
+    agrup = st.number_input("Conductores portadores de corriente", value=3)
 
-    rep[['Ancho Sugerido', 'Llenado %']] = rep['ÁREA (mm2)'].apply(lambda x: pd.Series(nom_check(x)))
-    st.table(rep)
-    st.dataframe(df)
+# --- 3. MOTOR DE CÁLCULO SOCEMB ---
+# Factores de corrección NOM
+f_t = {30: 1.0, 35: 0.94, 40: 0.88, 45: 0.82, 50: 0.75}.get(temp_amb, 1.0)
+f_a = 1.0 if agrup <= 3 else (0.8 if agrup <= 6 else 0.7)
 
-    # Excel Download
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='CableSchedule')
-        rep.to_excel(writer, index=False, sheet_name='MemoriaCharolas')
-    st.download_button("📥 Descargar Excel SOCEMB", output.getvalue(), file_name="Reporte_SOCEMB.xlsx")
+i_nom = (hp * 746) / (v * 1.732 * 0.85 * 0.90)
+i_dis = i_nom * 1.25
+
+def validar_cable(corriente):
+    for cal, d in DATOS_OKONITE.items():
+        # Criterio 1: Capacidad de la Terminal (NOM 110-14c)
+        limite_terminal = d["60C"] if corriente <= 100 else d["75C"]
+        
+        # Criterio 2: Capacidad Ajustada (Derating sobre 90°C)
+        capacidad_corregida = d["90C"] * f_t * f_a
+        
+        if corriente <= limite_terminal and corriente <= capacidad_corregida:
+            # Validar Caída de Tensión (Límite 3%)
+            vd = (1.732 * i_nom * dist * RES_CU[cal]) / (v * 10)
+            if vd <= 3.0:
+                return cal, round(vd, 2), limite_terminal, round(capacidad_corregida, 2)
+    return "500 kcmil", 0, 0, 0
+
+calibre, vd_final, lim_term, cap_corr = validar_cable(i_dis)
+
+# --- 4. INTERFAZ DE RESULTADOS ---
+col1, col2, col3 = st.columns(3)
+col1.metric("Corriente Diseño", f"{round(i_dis, 2)} A")
+col2.metric("Calibre Okonite", calibre)
+col3.metric("Caída Tensión", f"{vd_final}%")
+
+with st.expander("Ver Análisis de Cumplimiento NOM"):
+    st.write(f"**Límite Terminal (60/75°C):** {lim_term} A")
+    st.write(
