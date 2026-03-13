@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import math
 
-# --- 1. BASE DE DATOS TÉCNICA (OKONITE C-L-X) ---
+# --- 1. BASE DE DATOS TÉCNICA OKONITE C-L-X ---
 DATOS_OKONITE = {
     "14 AWG": {"60C": 15, "75C": 20, "90C": 25, "cat": "546-31-3403", "grd": "1x#14", "short_1s": 1.5, "od": 16.3},
     "12 AWG": {"60C": 20, "75C": 20, "90C": 30, "cat": "546-31-3453", "grd": "1x#12", "short_1s": 2.4, "od": 17.5},
@@ -24,25 +24,25 @@ RES_CU = {"14 AWG": 10.2, "12 AWG": 6.6, "10 AWG": 3.9, "8 AWG": 2.5, "6 AWG": 1
 ANCHOS_NOM = {152.4: "6 in", 228.6: "9 in", 304.8: "12 in", 457.2: "18 in", 609.6: "24 in", 762.0: "30 in", 914.4: "36 in"}
 HP_NEMA = [0.5, 0.75, 1, 1.5, 2, 3, 5, 7.5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 125, 150, 200, 250, 300, 350, 400, 450, 500]
 
-st.set_page_config(page_title="SOCEMB v3.0", layout="wide")
+st.set_page_config(page_title="SOCEMB: Ingeniería Maestra", layout="wide")
 if 'db' not in st.session_state: st.session_state.db = []
 
-# --- 2. ENTRADA DE DATOS ---
+# --- 2. ENTRADA DE DATOS (INTEGRIDAD DE DISEÑO) ---
 with st.sidebar:
-    st.header("🆔 Identificación")
+    st.header("🆔 Trazabilidad")
     tag, origen, destino, tray = st.text_input("Tag"), st.text_input("Origen"), st.text_input("Destino"), st.text_input("ID Trayectoria")
     
-    st.header("⚙️ Carga Eléctrica")
+    st.header("⚙️ Parámetros de Carga")
     u_pot = st.selectbox("Unidad", ["HP (Motor NEMA)", "kW", "kVA"])
-    p_val = st.selectbox("Valor (HP)", HP_NEMA) if u_pot == "HP (Motor NEMA)" else st.number_input("Valor", value=100.0)
+    p_val = st.selectbox("Valor (HP)", HP_NEMA, index=15) if u_pot == "HP (Motor NEMA)" else st.number_input("Valor", value=100.0)
     v_op = st.selectbox("Voltaje (V)", [440, 460, 480], index=1)
     
-    st.header("🌍 Condiciones")
-    dist, i_sc, t_f = st.number_input("L (m)", 50), st.number_input("Isc (kA)", 10.0), st.number_input("t falla (s)", 0.1)
-    t_amb = st.select_slider("T_amb (°C)", options=[30, 35, 40, 45, 50], value=40)
-    agrup = st.number_input("Cables en Charola", value=3)
+    st.header("🌍 Factores Ambientales")
+    dist, i_sc, t_f = st.number_input("Distancia (m)", 50), st.number_input("Isc Red (kA)", 10.0), st.number_input("Tiempo falla (s)", 0.1)
+    t_amb = st.select_slider("Temp Ambiente (°C)", options=[30, 35, 40, 45, 50], value=40)
+    agrup = st.number_input("Cables Agrupados", value=3)
 
-# --- 3. PROCESAMIENTO TÉCNICO ---
+# --- 3. LÓGICA DE INGENIERÍA (RESTRICTIVA) ---
 f_t = {30: 1.0, 35: 0.94, 40: 0.88, 45: 0.82, 50: 0.75}.get(t_amb, 1.0)
 f_a = 1.0 if agrup <= 3 else (0.8 if agrup <= 6 else 0.7)
 i_nom = (p_val * 746) / (v_op * 1.732 * 0.85 * 0.90) if "HP" in u_pot else (p_val * 1000) / (v_op * 1.732)
@@ -54,11 +54,11 @@ def calcular_ingenieria():
     
     for cal in ORDEN_CAL:
         d = DATOS_OKONITE[cal]
-        # Ampacidad con Derating
+        # Ley 1: Ampacidad (Terminales + Derating sobre 90C)
         if not c_amp and i_dis <= d[t_term] and i_dis <= (d["90C"] * f_t * f_a): c_amp = cal
-        # VD
+        # Ley 2: Caída de Tensión (Límite 3%)
         if not c_vd and ((1.732 * i_nom * dist * RES_CU[cal])/(v_op * 10)) <= 3.0: c_vd = cal
-        # Corto Circuito
+        # Ley 3: Corto Circuito (Térmica 1s)
         if not c_sc and i_sc <= (d["short_1s"]/(t_f**0.5)): c_sc = cal
 
     if all([c_amp, c_vd, c_sc]):
@@ -69,42 +69,45 @@ def calcular_ingenieria():
             "CAL_F": cal_f, "MIN_AMP": c_amp, "MIN_VD": c_vd, "MIN_SC": c_sc,
             "T_USADA": t_term, "F_CORR": round(f_t * f_a, 2), "OD": d_f["od"],
             "CAT": d_f["cat"], "FORM": f"3x{cal_f} + {d_f['grd']}",
-            "VD%": round((1.732 * i_nom * dist * RES_CU[cal_f])/(v_op * 10), 2),
-            "ISC_ADMIS": round(d_f["short_1s"]/(t_f**0.5), 2),
-            "ES_GRANDE": True if "1/0" in cal_f or "kcmil" in cal_f else False
+            "VD_R": round((1.732 * i_nom * dist * RES_CU[cal_f])/(v_op * 10), 2),
+            "ISC_R": round(d_f["short_1s"]/(t_f**0.5), 2),
+            "GRANDE": True if "1/0" in cal_f or "kcmil" in cal_f else False
         }
     return None
 
 res = calcular_ingenieria()
 
-# --- 4. VISUALIZACIÓN Y REGISTRO ---
+# --- 4. MEMORIA DE CÁLCULO IMPRESA ---
 if res:
-    st.subheader(f"📄 Memoria Técnica: {tag}")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Ampacidad Mínima", res["MIN_AMP"], f"Ref: {res['T_USADA']}")
-    m2.metric("VD Mínimo", res["MIN_VD"], f"Real: {res['VD%']}%")
-    m3.metric("SC Mínimo", res["MIN_SC"], f"Máx: {res['ISC_ADMIS']} kA")
+    st.subheader(f"📄 Memoria de Cálculo Detallada: Circuito {tag}")
+    c1, c2, c3 = st.columns(3)
+    c1.info(f"**Ampacidad:** {res['MIN_AMP']}\n\n(Basado en {res['T_USADA']} y Derating {res['F_CORR']})")
+    c2.info(f"**Caída Tensión:** {res['MIN_VD']}\n\n(Valor Real: {res['VD_R']}%)")
+    c3.info(f"**Corto Circuito:** {res['MIN_SC']}\n\n(Admisible: {res['ISC_R']} kA)")
 
     if st.button("➕ Registrar en Cable Schedule"):
         st.session_state.db.append({
             "TAG": tag, "ORIGEN": origen, "DESTINO": destino, "MODELO": res["CAT"],
             "FORMACIÓN": res["FORM"], "I_DIS": round(i_dis, 1), "DERATING": res["F_CORR"],
-            "MIN_AMP": res["MIN_AMP"], "MIN_VD": res["MIN_VD"], "MIN_SC": res["MIN_SC"],
-            "CALIBRE": res["CAL_F"], "VD%": res["VD%"], "ISC_kA": res["ISC_ADMIS"],
-            "TRAY": tray, "OD": res["OD"], "GRANDE": res["ES_GRANDE"]
+            "TABLA": res["T_USADA"], "MIN_AMP": res["MIN_AMP"], "MIN_VD": res["MIN_VD"],
+            "MIN_SC": res["MIN_SC"], "CALIBRE": res["CAL_F"], "VD%": res["VD_R"],
+            "ISC_MAX": res["ISC_R"], "TRAY": tray, "OD": res["OD"], "GRANDE": res["GRANDE"]
         })
 
-# --- 5. REPORTES DE AUDITORÍA (NOM-001) ---
+# --- 5. AUDITORÍA DE CHAROLAS (NOM-001 ART. 392) ---
 if st.session_state.db:
     df = pd.DataFrame(st.session_state.db)
     st.divider()
-    st.subheader("📋 Cable Schedule y Auditoría de Trayectorias")
-    st.dataframe(df[["TAG", "ORIGEN", "DESTINO", "I_DIS", "CALIBRE", "VD%", "ISC_kA", "MIN_AMP", "MIN_VD", "MIN_SC"]])
+    st.subheader("📋 Resumen Ejecutivo y Auditoría de Trayectorias")
+    st.dataframe(df[["TAG", "ORIGEN", "DESTINO", "I_DIS", "CALIBRE", "VD%", "ISC_MAX", "MIN_AMP", "MIN_VD", "MIN_SC"]])
     
-    # Análisis de Charolas por NOM Art. 392
-    for t, gp in df.groupby("TRAY"):
-        sum_od_g = gp[gp["GRANDE"] == True]["OD"].sum()
-        sum_area_p = (gp[gp["GRANDE"] == False]["OD"]**2 * 0.7854).sum()
+    for t_id, group in df.groupby("TRAY"):
+        g_grandes = group[group["GRANDE"] == True]
+        g_peques = group[group["GRANDE"] == False]
+        # Aplicación estricta de los 3 criterios NOM
+        sum_od_g = g_grandes["OD"].sum()
+        sum_area_p = (g_peques["OD"]**2 * 0.7854).sum()
         ancho_req = sum_od_g + (sum_area_p / 25.4)
         ancho_f = min([a for a in ANCHOS_NOM.keys() if a >= ancho_req], default=914.4)
-        st.info(f"Trayectoria **{t}**: Requiere Charola de **{ANCHOS_NOM[ancho_f]}** (Llenado NOM: {round((ancho_req/ancho_f)*100,1)}%)")
+        
+        st.warning(f"**Trayectoria {t_id}:** Ancho Sugerido **{ANCHOS_NOM[ancho_f]}** (Llenado NOM: {round((ancho_req/ancho_f)*100,1)}%)")
