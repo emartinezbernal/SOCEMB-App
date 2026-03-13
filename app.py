@@ -26,75 +26,92 @@ HP_STANDARD = [0.5, 0.75, 1, 1.5, 2, 3, 5, 7.5, 10, 15, 20, 25, 30, 40, 50, 60, 
 st.set_page_config(page_title="SOCEMB vFinal", layout="wide")
 if 'db' not in st.session_state: st.session_state.db = []
 
-st.title("⚡ SOCEMB: Ingeniería de Cables (Resumen de Cálculos)")
+st.title("⚡ SOCEMB: Ingeniería de Cables")
 
 # --- 2. ENTRADA DE DATOS (SIDEBAR) ---
 with st.sidebar:
     st.header("🆔 Identificación")
-    tag, origen, destino = st.text_input("Tag", "M-101"), st.text_input("Origen", "MCC-01"), st.text_input("Destino", "Motor-A")
+    tag = st.text_input("Tag del Circuito", "M-101")
+    origen = st.text_input("Origen", "MCC-01")
+    destino = st.text_input("Destino", "Motor-A")
     trayectoria = st.text_input("ID Trayectoria", "CH-01")
-    tipo_cable_ui = st.radio("Tipo", ["Multiconductor (Okonite)", "Monopolar (NOM)"])
+    tipo_cable_ui = st.radio("Tipo de Conductor", ["Multiconductor (Okonite)", "Monopolar (NOM)"])
     
-    st.header("⚙️ Parámetros")
+    st.header("⚙️ Parámetros de Carga")
     hp = st.selectbox("HP Estándar", options=HP_STANDARD, index=19)
     v = st.selectbox("Voltaje (V)", [440, 460, 480], index=1)
-    dist, i_sc, t_falla = st.number_input("Dist (m)", 50), st.number_input("Isc (kA)", 10.0), st.number_input("t (s)", 0.1)
+    dist = st.number_input("Longitud Trayectoria (m)", value=50)
+    i_sc = st.number_input("I Corto Circuito (kA)", value=10.0)
+    t_falla = st.number_input("Tiempo de Falla (s)", value=0.1)
     
-    st.header("🌍 Factores")
-    t_amb = st.select_slider("Temp (°C)", options=[30, 35, 40, 45, 50], value=40)
-    agrup = st.number_input("Agrupamiento", value=3)
+    st.header("🌍 Factores de Ajuste (NOM 310-15)")
+    t_amb = st.select_slider("Temp. Ambiente (°C)", options=[30, 35, 40, 45, 50], value=40)
+    agrup = st.number_input("Conductores Portadores en Grupo", value=3)
 
-# --- 3. LÓGICA DE VALIDACIÓN TRIPLE ---
+# --- 3. CÁLCULOS DE INGENIERÍA ---
 f_t = {30: 1.0, 35: 0.94, 40: 0.88, 45: 0.82, 50: 0.75}.get(t_amb, 1.0)
 f_a = 1.0 if agrup <= 3 else (0.8 if agrup <= 6 else 0.7)
 i_nom = (hp * 746) / (v * 1.732 * 0.85 * 0.90)
 i_dis = i_nom * 1.25
 
-def realizar_calculo_detallado():
+def motor_calculo():
     for cal, d in DATOS_OKONITE.items():
         t_ref = "60C" if i_dis <= 100 else "75C"
-        # 1. Validación Ampacidad (Derating)
-        cap_real = d["90C"] * f_t * f_a
-        chk_amp = i_dis <= d[t_ref] and i_dis <= cap_real
-        # 2. Validación Caída de Tensión
-        vd = (1.732 * i_nom * dist * RES_CU_METRICO[cal]) / (v * 10)
-        chk_vd = vd <= 3.0
-        # 3. Validación Corto Circuito
-        isc_cap = d["short_1s"] / (t_falla ** 0.5)
-        chk_sc = i_sc <= isc_cap
+        cap_corregida = d["90C"] * f_t * f_a
         
-        if chk_amp and chk_vd and chk_sc:
+        vd = (1.732 * i_nom * dist * RES_CU_METRICO[cal]) / (v * 10)
+        isc_cap = d["short_1s"] / (t_falla ** 0.5)
+        
+        # Criterios de aceptación
+        if i_dis <= d[t_ref] and i_dis <= cap_corregida and vd <= 3.0 and i_sc <= isc_cap:
             return {
-                "cal": cal, "t_ref": t_ref, "amp_lim": round(min(d[t_ref], cap_real), 1),
-                "vd_val": round(vd, 2), "sc_val": round(isc_cap, 2), "ft": f_t, "fa": f_a, "od": d["od_mm"]
+                "cal": cal, "t_ref": t_ref, "amp_lim": round(min(d[t_ref], cap_corregida), 2),
+                "vd": round(vd, 2), "isc": round(isc_cap, 2), "od": d["od_mm"]
             }
     return None
 
-res = realizar_calculo_detallado()
+res = motor_calculo()
 
-# Botón de Registro
-if res and st.button("➕ Registrar con Memoria de Cálculo"):
-    st.session_state.db.append({
-        "TAG": tag, "ORIGEN": origen, "DESTINO": destino, "TRAYECTORIA": trayectoria,
-        "HP": hp, "I_DIS (A)": round(i_dis, 2),
-        "CALC_AMPACIDAD": f"{res['amp_lim']} A (ft:{res['ft']}, fa:{res['fa']})",
-        "CALC_VD%": f"{res['vd_val']}% (L={dist}m)",
-        "CALC_ISC": f"{res['sc_val']} kA (t={t_falla}s)",
-        "SELECCIÓN_FINAL": f"{res['cal']} Okonite C-L-X",
-        "OD_MM": res['od']
-    })
+if res:
+    st.info(f"Configuración: {tipo_cable_ui}, 3-Cond, VFD, 600/1000V")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Ampacidad Diseño", f"{round(i_dis, 2)} A")
+    c2.metric("Modelo Seleccionado", res["cal"])
+    c3.metric("Caída de Tensión", f"{res['vd']}%")
 
-# --- 4. RESUMEN DE INGENIERÍA ---
+    if st.button("➕ Registrar con Memoria de Cálculo"):
+        st.session_state.db.append({
+            "TAG": tag, "ORIGEN": origen, "DESTINO": destino, 
+            "TRAYECTORIA": trayectoria, "HP": hp, "I_DIS (A)": round(i_dis, 2),
+            "CALC_AMPACIDAD": f"{res['amp_lim']} A (Ref:{res['t_ref']})",
+            "CALC_VD%": f"{res['vd']}%",
+            "CALC_ISC": f"{res['isc']} kA",
+            "SELECCIÓN_FINAL": f"{res['cal']} Okonite",
+            "OD_MM": res["od"]
+        })
+
+# --- 4. REPORTES CORREGIDOS ---
 if st.session_state.db:
     df = pd.DataFrame(st.session_state.db)
     st.subheader("📋 Resumen de Cálculo y Selección Final")
-    # Mostrar columnas solicitadas
-    st.dataframe(df[["TAG", "ORIGEN", "DESTINO", "I_DIS (A)", "CALC_AMPACIDAD", "CALC_VD%", "CALC_ISC", "SELECCIÓN_FINAL"]])
     
-    st.subheader("📊 Trayectorias (Llenado)")
+    # Columnas exactas para evitar KeyError
+    cols_ver = ["TAG", "ORIGEN", "DESTINO", "I_DIS (A)", "CALC_AMPACIDAD", "CALC_VD%", "CALC_ISC", "SELECCIÓN_FINAL"]
+    st.dataframe(df[cols_ver])
+    
+    st.subheader("📊 Llenado de Charolas (Unidad Principal: mm)")
     res_tray = []
     for tray, gp in df.groupby("TRAYECTORIA"):
         od_sum = gp["OD_MM"].sum()
         ancho_mm = next((a for a in ANCHOS_CHAROLA_MM if a >= od_sum), 914.4)
-        res_tray.append({"CHAROLA": tray, "Ancho Req (mm)": round(od_sum, 2), "Sugerencia": ANCHOS_CHAROLA_MM[ancho_mm], "% Llenado": f"{round((od_sum/ancho_mm)*100, 2)}%"})
+        res_tray.append({
+            "TRAYECTORIA": tray, 
+            "Ancho Requerido (mm)": round(od_sum, 2), 
+            "Ancho Sugerido": ANCHOS_CHAROLA_MM[ancho_mm], 
+            "% Llenado": f"{round((od_sum/ancho_mm)*100, 2)}%"
+        })
     st.table(res_tray)
+
+    towrite = io.BytesIO()
+    df.to_excel(towrite, index=False, engine='openpyxl')
+    st.download_button("📥 Descargar Excel", towrite.getvalue(), file_name="SOCEMB_Reporte.xlsx")
