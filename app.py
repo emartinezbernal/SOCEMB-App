@@ -1,9 +1,7 @@
 import streamlit as st
 import pandas as pd
-import io
 
-# --- 1. BASE DE DATOS TÉCNICA OKONITE C-L-X ---
-# Restaurado: Incluye áreas, diámetros y corrientes de corto circuito originales
+# --- 1. BASE DE DATOS TÉCNICA INVARIABLE (OKONITE C-L-X) ---
 DATOS_OKONITE = {
     "14 AWG": {"60C": 15, "75C": 20, "90C": 25, "area_mm2": 2.08, "od_mm": 16.3, "cat": "546-31-3403", "grd": "1x#14", "short_1s": 1.5},
     "12 AWG": {"60C": 20, "75C": 20, "90C": 30, "area_mm2": 3.31, "od_mm": 17.5, "cat": "546-31-3453", "grd": "1x#12", "short_1s": 2.4},
@@ -25,101 +23,86 @@ RES_CU_METRICO = {"14 AWG": 10.2, "12 AWG": 6.6, "10 AWG": 3.9, "8 AWG": 2.5, "6
 ANCHOS_CHAROLA_MM = {152.4: "6 in", 228.6: "9 in", 304.8: "12 in", 457.2: "18 in", 609.6: "24 in", 762.0: "30 in", 914.4: "36 in"}
 HP_STANDARD = [0.5, 0.75, 1, 1.5, 2, 3, 5, 7.5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 125, 150, 200, 250, 300, 350, 400, 450, 500]
 
-st.set_page_config(page_title="SOCEMB Profesional", layout="wide")
+st.set_page_config(page_title="SOCEMB: Memoria de Cálculo", layout="wide")
 if 'db' not in st.session_state: st.session_state.db = []
 
-st.title("⚡ SOCEMB: Ingeniería de Cables")
+st.title("⚡ SOCEMB: Memoria de Cálculo de Conductores")
 
-# --- 2. ENTRADA DE DATOS COMPLETA (SIDEBAR) ---
+# --- 2. SIDEBAR: ENTRADA TÉCNICA COMPLETA ---
 with st.sidebar:
-    st.header("🆔 Identificación")
+    st.header("🆔 Identificación del Proyecto")
     tag = st.text_input("Tag del Circuito", "M-101")
-    origen = st.text_input("Origen", "MCC-01")
-    destino = st.text_input("Destino", "Motor-A")
+    origen = st.text_input("Origen (MCC/Panel)", "MCC-01")
+    destino = st.text_input("Destino (Equipo)", "Motor-A")
     trayectoria = st.text_input("ID Trayectoria (Tray)", "CH-01")
-    tipo_cable_ui = st.radio("Tipo de Conductor", ["Multiconductor (Okonite)", "Monopolar (NOM)"])
     
-    st.header("⚙️ Parámetros de Carga")
-    hp = st.selectbox("Potencia (HP)", options=HP_STANDARD, index=19) # 150 HP
-    v = st.selectbox("Voltaje (V)", [440, 460, 480], index=1)
-    dist = st.number_input("Distancia (m)", value=50)
-    i_sc = st.number_input("I Corto Circuito (kA)", value=10.0)
-    t_falla = st.number_input("Tiempo de Falla (s)", value=0.1)
+    st.header("⚙️ Parámetros de Diseño")
+    hp = st.selectbox("Potencia de Carga (HP)", options=HP_STANDARD, index=19) # 150 HP
+    v = st.selectbox("Voltaje Nominal (V)", [440, 460, 480], index=1)
+    dist = st.number_input("Longitud de Trayectoria (m)", value=50)
+    i_sc = st.number_input("Corriente Corto Circuito Red (kA)", value=10.0)
+    t_falla = st.number_input("Tiempo de Despeje de Falla (s)", value=0.1)
     
-    st.header("🌍 Factores y Unidades")
-    t_amb = st.select_slider("Temp. Ambiente (°C)", options=[30, 35, 40, 45, 50], value=40)
-    agrup = st.number_input("Cables en Grupo", value=3)
+    st.header("🌍 Factores de Corrección")
+    t_amb = st.select_slider("Temperatura Ambiente (°C)", options=[30, 35, 40, 45, 50], value=40)
+    agrup = st.number_input("No. Conductores Agrupados", value=3)
 
-# --- 3. LÓGICA DE INGENIERÍA INTEGRAL ---
+# --- 3. CÁLCULOS DE INGENIERÍA (MEMORIA INTERNA) ---
 f_t = {30: 1.0, 35: 0.94, 40: 0.88, 45: 0.82, 50: 0.75}.get(t_amb, 1.0)
 f_a = 1.0 if agrup <= 3 else (0.8 if agrup <= 6 else 0.7)
 i_nom = (hp * 746) / (v * 1.732 * 0.85 * 0.90)
 i_dis = i_nom * 1.25
 
-def realizar_calculos_completos():
-    cal_amp, cal_vd, cal_sc = None, None, None
-    
+def ejecutar_memoria():
+    c_amp, c_vd, c_sc = None, None, None
     for cal in ORDEN_CALIBRES:
         d = DATOS_OKONITE[cal]
-        # A. Criterio Ampacidad
+        # Criterio 1: Ampacidad (NOM terminales)
         t_ref = "60C" if i_dis <= 100 else "75C"
-        cap_corregida = d["90C"] * f_t * f_a
-        if not cal_amp and i_dis <= d[t_ref] and i_dis <= cap_corregida:
-            cal_amp = cal
-        # B. Criterio Caída de Tensión (3%)
-        vd_calc = (1.732 * i_nom * dist * RES_CU_METRICO[cal]) / (v * 10)
-        if not cal_vd and vd_calc <= 3.0:
-            cal_vd = cal
-        # C. Criterio Corto Circuito
-        isc_cable = d["short_1s"] / (t_falla ** 0.5)
-        if not cal_sc and i_sc <= isc_cable:
-            cal_sc = cal
+        cap_corr = d["90C"] * f_t * f_a
+        if not c_amp and i_dis <= d[t_ref] and i_dis <= cap_corr: c_amp = cal
+        # Criterio 2: Caída de Tensión (Límite 3%)
+        vd = (1.732 * i_nom * dist * RES_CU_METRICO[cal]) / (v * 10)
+        if not c_vd and vd <= 3.0: c_vd = cal
+        # Criterio 3: Corto Circuito
+        isc_lim = d["short_1s"] / (t_falla ** 0.5)
+        if not c_sc and i_sc <= isc_lim: c_sc = cal
 
-    if cal_amp and cal_vd and cal_sc:
-        idxs = [ORDEN_CALIBRES.index(cal_amp), ORDEN_CALIBRES.index(cal_vd), ORDEN_CALIBRES.index(cal_sc)]
+    if all([c_amp, c_vd, c_sc]):
+        idxs = [ORDEN_CALIBRES.index(c_amp), ORDEN_CALIBRES.index(c_vd), ORDEN_CALIBRES.index(c_sc)]
         idx_f = max(idxs)
         cal_f = ORDEN_CALIBRES[idx_f]
         d_f = DATOS_OKONITE[cal_f]
-        
-        # Identificar qué criterio forzó el calibre mayor
         gob = "Ampacidad" if idx_f == idxs[0] else ("Caída Tensión" if idx_f == idxs[1] else "Corto Circuito")
-        
         return {
-            "final": cal_f, "amp": cal_amp, "vd": cal_vd, "sc": cal_sc, "gob": gob,
-            "vd_real": round((1.732 * i_nom * dist * RES_CU_METRICO[cal_f])/(v*10), 2),
-            "isc_lim": round(d_f["short_1s"]/(t_falla**0.5), 2), "od": d_f["od_mm"]
+            "final": cal_f, "amp": c_amp, "vd": c_vd, "sc": c_sc, "gob": gob,
+            "vd_r": round((1.732 * i_nom * dist * RES_CU_METRICO[cal_f])/(v*10), 2),
+            "isc_r": round(d_f["short_1s"]/(t_falla**0.5), 2), "od": d_f["od_mm"], "grd": d_f["grd"]
         }
     return None
 
-res = realizar_calculos_completos()
+res = ejecutar_memoria()
 
 if res:
-    st.info(f"Selección: {res['final']} (Gobernado por {res['gob']})")
-    if st.button("➕ Registrar en Cable Schedule"):
+    st.success(f"Selección Óptima: {res['final']} | Factor Limitante: {res['gob']}")
+    if st.button("➕ Registrar en Memoria de Cálculo"):
         st.session_state.db.append({
-            "TAG": tag, "ORIGEN": origen, "DESTINO": destino, "TRAYECTORIA": trayectoria,
-            "HP": hp, "I_DIS (A)": round(i_dis, 2), "MIN_AMP": res["amp"], 
-            "MIN_VD": res["vd"], "MIN_SC": res["sc"], "GOBERNADO": res["gob"],
-            "SELECCIÓN_FINAL": res["final"], "VD%": res["vd_real"], 
-            "ISC_LIM (kA)": res["isc_val"] if "isc_val" in res else res["isc_lim"], "OD_MM": res["od"]
+            "TAG": tag, "ORIGEN": origen, "DESTINO": destino, "HP": hp, "I_DIS (A)": round(i_dis, 2),
+            "MIN_AMP": res["amp"], "MIN_VD": res["vd"], "MIN_SC": res["sc"], 
+            "GOBERNADO": res["gob"], "CALIBRE_FINAL": res["final"], "VD_REAL%": f"{res['vd_r']}%",
+            "ISC_MAX_KA": res["isc_r"], "GROUND": res["grd"], "OD_MM": res["od"], "TRAY": trayectoria
         })
 
-# --- 4. REPORTES Y LLENADO (RESTAURADO) ---
+# --- 4. DATAFRAME: RESUMEN DE MEMORIA DE CÁLCULO ---
 if st.session_state.db:
     df = pd.DataFrame(st.session_state.db)
-    st.subheader("📋 Resumen de Cálculo y Auditoría Técnica")
-    # Columnas completas para juicio técnico
-    cols = ["TAG", "I_DIS (A)", "MIN_AMP", "MIN_VD", "MIN_SC", "GOBERNADO", "SELECCIÓN_FINAL", "VD%", "ISC_LIM (kA)"]
-    st.dataframe(df[cols])
+    st.subheader("📋 Resumen Ejecutivo de Memoria de Cálculo")
+    # Este DataFrame es el juicio técnico que solicitaste
+    cols_finales = ["TAG", "I_DIS (A)", "MIN_AMP", "MIN_VD", "MIN_SC", "GOBERNADO", "CALIBRE_FINAL", "VD_REAL%", "ISC_MAX_KA", "GROUND"]
+    st.dataframe(df[cols_finales])
     
-    st.subheader("📊 Llenado de Charolas (Unidad: mm)")
-    res_tray = []
-    # Corrección del KeyError: Usar el nombre exacto de la columna 'TRAYECTORIA'
-    for tray, gp in df.groupby("TRAYECTORIA"):
-        od_sum = gp["OD_MM"].sum()
-        ancho_mm = next((a for a in ANCHOS_CHAROLA_MM if a >= od_sum), 914.4)
-        res_tray.append({
-            "TRAYECTORIA": tray, "Ancho Req (mm)": round(od_sum, 2), 
-            "Sugerencia": ANCHOS_CHAROLA_MM[ancho_mm], "% Llenado": f"{round((od_sum/ancho_mm)*100, 2)}%"
-        })
-    st.table(res_tray)
+    st.subheader("📊 Análisis de Llenado de Trayectorias")
+    for tray, gp in df.groupby("TRAY"):
+        suma_od = gp["OD_MM"].sum()
+        ancho = next((a for a in ANCHOS_CHAROLA_MM if a >= suma_od), 914.4)
+        st.write(f"**Trayectoria {tray}:** Suma OD: {round(suma_od,1)}mm | Sugerida: {ANCHOS_CHAROLA_MM[ancho]} | Llenado: {round((suma_od/ancho)*100, 1)}%")
