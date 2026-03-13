@@ -18,33 +18,33 @@ st.title("⚡ SOCEMB: Ingeniería Eléctrica Integral")
 
 # --- 2. ENTRADAS LATERALES ---
 with st.sidebar:
-    st.header("📋 Identificación del Proyecto")
-    c_tag = st.text_input("Tag del Circuito / No.", "M-101")
-    c_desc = st.text_input("Descripción del Equipo", "Motor de Proceso")
+    st.header("📋 Identificación")
+    c_tag = st.text_input("Tag / No. Circuito", "M-101")
+    c_desc = st.text_input("Descripción", "Motor de Proceso")
     c_origen = st.text_input("Origen (DE:)", "CCM-01")
     c_destino = st.text_input("Destino (A:)", "Área de Bombas")
     
-    st.header("⚙️ Parámetros de Diseño")
+    st.header("⚙️ Parámetros")
     tipo_p = st.selectbox("Unidad de Potencia", ["HP (NEMA)", "kW", "kVA"])
-    val_p = st.selectbox("Valor HP", sorted(TABLA_NEMA_3F_460V.keys()), index=5) if tipo_p == "HP (NEMA)" else st.number_input("Valor", value=10.0)
+    if tipo_p == "HP (NEMA)":
+        val_p = st.selectbox("Valor HP", sorted(TABLA_NEMA_3F_460V.keys()), index=5)
+    else:
+        val_p = st.number_input("Valor", value=10.0)
+    
     v = st.selectbox("Voltaje (V)", [220, 440, 460, 480], index=2)
-    dist = st.number_input("Distancia / Longitud (m)", value=50)
-    tipo_canal = st.radio("Método de Soporte", ["Tubo Conduit", "Charola"])
+    dist = st.number_input("Distancia (m)", value=50)
+    tipo_canal = st.radio("Soporte", ["Tubo Conduit", "Charola"])
 
 # --- 3. PROCESO DE CÁLCULO ---
-# Corriente Nominal
 if tipo_p == "HP (NEMA)":
     i_nom = TABLA_NEMA_3F_460V[val_p] * (460 / v)
 else:
-    fp_std = 0.85
-    pkva = val_p / fp_std if tipo_p == "kW" else val_p
+    pkva = val_p / 0.85 if tipo_p == "kW" else val_p
     i_nom = (pkva * 1000) / (v * 1.732)
 
-# Corriente de Diseño y Ajuste
 f_ajuste = 0.85 if tipo_canal == "Charola" else 0.80
 i_dis = (i_nom * 1.25) / f_ajuste
 
-# Selección por Ampacidad y Caída de Tensión
 cal_base = next((c for c in ORDEN_CALIBRES if i_dis <= TABLA_COBRE_75[c]), "500 kcmil")
 cal_final = cal_base
 for cal in ORDEN_CALIBRES[ORDEN_CALIBRES.index(cal_base):]:
@@ -54,11 +54,11 @@ for cal in ORDEN_CALIBRES[ORDEN_CALIBRES.index(cal_base):]:
     if vd <= 3.0: break
 vd_final = (1.732 * i_nom * dist * RES_OHM_KM.get(cal_final, 0.089)) / (v * 10)
 
-# --- 4. DISPLAY DE RESULTADOS ---
-st.info(f"Circuito Actual: **{c_tag}** | {c_desc}")
+# --- 4. DISPLAY ---
+st.info(f"Circuito: **{c_tag}** | {c_desc}")
 c1, c2, c3 = st.columns(3)
-c1.metric("FLC (Corriente)", f"{round(i_nom,2)} A")
-c2.metric("Calibre Seleccionado", cal_final)
+c1.metric("FLC Nominal", f"{round(i_nom,2)} A")
+c2.metric("Calibre Sugerido", cal_final)
 c3.metric("Caída de Tensión", f"{round(vd_final,2)} %")
 
 if st.button("➕ Agregar al Cable Schedule"):
@@ -76,12 +76,15 @@ if st.session_state.lista_circuitos:
     st.dataframe(df)
     
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='CableSchedule')
-    
-    st.download_button("📥 Descargar Excel para Master Template", output.getvalue(), 
-                       file_name=f"SOCEMB_Schedule_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    try:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='CableSchedule')
+        
+        st.download_button("📥 Descargar Excel para Master Template", output.getvalue(), 
+                           file_name=f"SOCEMB_Schedule_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except ImportError:
+        st.error("Falta la librería 'openpyxl'. Por favor, añádela a tu archivo requirements.txt en GitHub.")
 
     if st.button("🗑️ Reiniciar Lista"):
         st.session_state.lista_circuitos = []
