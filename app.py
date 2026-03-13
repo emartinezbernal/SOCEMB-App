@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 
-# --- 1. BASE DE DATOS TÉCNICA OKONITE C-L-X (Multiconductor VFD) ---
+# --- 1. BASE DE DATOS TÉCNICA OKONITE C-L-X ---
 DATOS_OKONITE = {
     "14 AWG": {"60C": 15, "75C": 20, "90C": 25, "area_mm2": 206, "od_mm": 16.3, "cat": "546-31-3403", "grd": "1x#14", "short_1s": 1.5},
     "12 AWG": {"60C": 20, "75C": 20, "90C": 30, "area_mm2": 239, "od_mm": 17.5, "cat": "546-31-3453", "grd": "1x#12", "short_1s": 2.4},
@@ -25,12 +25,14 @@ ANCHOS_CHAROLA_MM = {152.4: "6 in", 228.6: "9 in", 304.8: "12 in", 457.2: "18 in
 st.set_page_config(page_title="SOCEMB vFinal", layout="wide")
 if 'db' not in st.session_state: st.session_state.db = []
 
-st.title("⚡ SOCEMB: Ingeniería de Cables (Configuración Completa)")
+st.title("⚡ SOCEMB: Ingeniería de Cables (Configuración Definitiva)")
 
 # --- 2. ENTRADA DE DATOS (SIDEBAR) ---
 with st.sidebar:
     st.header("🆔 Identificación")
     tag = st.text_input("Tag del Circuito", "M-101")
+    origen = st.text_input("Origen (Panel/MCC)", "MCC-01")
+    destino = st.text_input("Destino (Equipo)", "Motor-A")
     trayectoria = st.text_input("ID Trayectoria (Charola)", "CH-01")
     tipo_cable_ui = st.radio("Tipo de Conductor", ["Multiconductor (Okonite)", "Monopolar (NOM)"])
     
@@ -43,69 +45,72 @@ with st.sidebar:
     
     st.header("🌍 Factores de Ajuste")
     t_amb = st.select_slider("Temp. Ambiente (°C)", options=[30, 35, 40, 45, 50], value=40)
-    agrup = st.number_input("Cables en el mismo nivel", value=3)
+    agrup = st.number_input("Conductores en Grupo", value=3)
 
-# --- 3. LÓGICA DE DERATING Y SELECCIÓN ---
+# --- 3. LÓGICA TÉCNICA ---
 f_t = {30: 1.0, 35: 0.94, 40: 0.88, 45: 0.82, 50: 0.75}.get(t_amb, 1.0)
 f_a = 1.0 if agrup <= 3 else (0.8 if agrup <= 6 else 0.7)
 i_nom = (hp * 746) / (v * 1.732 * 0.85 * 0.90)
 i_dis = i_nom * 1.25
 
-def realizar_seleccion():
+def realizar_calculo():
     for cal, d in DATOS_OKONITE.items():
-        # Selección de columna de temperatura base para terminales
-        t_base = "60C" if i_dis <= 100 else "75C"
-        amp_base = d[t_base]
+        # Selección de temperatura de referencia según corriente (terminales)
+        t_ref = "60C" if i_dis <= 100 else "75C"
+        amp_base = d[t_ref]
         
-        # Derating sobre aislamiento de 90C para ampacidad corregida
+        # Derating sobre aislamiento de 90C para capacidad real
         amp_corregida = d["90C"] * f_t * f_a
         
-        # Caída de tensión y Corto Circuito
         vd = (1.732 * i_nom * dist * RES_CU_METRICO[cal]) / (v * 10)
-        isc_cap = d["short_1s"] / (t_falla ** 0.5)
+        isc_c = d["short_1s"] / (t_falla ** 0.5)
         
-        if i_dis <= amp_base and i_dis <= amp_corregida and vd <= 3.0 and i_sc <= isc_cap:
+        if i_dis <= amp_base and i_dis <= amp_corregida and vd <= 3.0 and i_sc <= isc_c:
             return {
                 "cal": cal, "cat": d["cat"], "grd": d["grd"], "vd": round(vd, 2),
-                "od": d["od_mm"], "isc": round(isc_cap, 2), "t_base": t_base,
+                "od": d["od_mm"], "isc": round(isc_c, 2), "t_ref": t_ref,
                 "f_t": f_t, "f_a": f_a
             }
     return None
 
-res = realizar_seleccion()
+res = realizar_calculo()
 
-# --- 4. DASHBOARD E INSERCIÓN ---
+# Dashboard de Selección
 if res:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Ampacidad Diseño", f"{round(i_dis, 2)} A")
-    c2.metric("Temp. Referencia", res["t_base"])
-    c3.metric("Modelo", res["cal"])
-    c4.metric("Derating (ft * fa)", round(res["f_t"] * res["f_a"], 2))
+    c2.metric("Temp. Referencia", res["t_ref"])
+    c3.metric("Modelo Seleccionado", res["cal"])
+    c4.metric("Factor Ajuste (Derating)", round(res["f_t"] * res["f_a"], 2))
 
-    if st.button("➕ Agregar al Schedule"):
+    if st.button("➕ Agregar al Cable Schedule"):
         st.session_state.db.append({
-            "TAG": tag, "TRAYECTORIA": trayectoria, "TIPO": tipo_cable_ui,
-            "CALIBRE": res["cal"], "AMP_BASE": res["t_base"], 
-            "FT (TEMP)": res["f_t"], "FA (AGRUP)": res["f_a"],
-            "CABLE": f"{res['cal']} Okonite C-L-X" if "Multiconductor" in tipo_cable_ui else f"{res['cal']} Monopolar",
-            "OD_MM": res["od"], "VD%": res["vd"], "ISC_KA": res["isc"]
+            "TAG": tag, "ORIGEN": origen, "DESTINO": destino, "TRAYECTORIA": trayectoria,
+            "TIPO": tipo_cable_ui, "CALIBRE": res["cal"], "T_REF": res["t_ref"],
+            "FT": res["f_t"], "FA": res["f_a"], "OD_MM": res["od"], 
+            "CATÁLOGO": res["cat"], "VD%": res["vd"], "ISC_MAX_KA": res["isc"]
         })
 
-# --- 5. REPORTES ---
+# --- 4. REPORTES ---
 if st.session_state.db:
     df = pd.DataFrame(st.session_state.db)
-    st.subheader("📋 Cable Schedule Detallado")
+    st.subheader("📋 Cable Schedule")
     st.dataframe(df)
     
-    st.subheader("📊 Análisis de Llenado y Trayectorias")
-    res_tray = []
+    st.subheader("📊 Análisis de Llenado de Charolas")
+    res_t = []
     for tray, gp in df.groupby("TRAYECTORIA"):
-        od_total = gp["OD_MM"].sum()
-        ancho_mm = next((a for a in ANCHOS_CHAROLA_MM if a >= od_total), 914.4)
-        llenado = (od_total / ancho_mm) * 100
+        od_sum = gp["OD_MM"].sum()
+        ancho_mm = next((a for a in ANCHOS_CHAROLA_MM if a >= od_sum), 914.4)
+        llenado = (od_sum / ancho_mm) * 100
         
-        res_tray.append({
-            "CHAROLA": tray, "Ancho Requerido (mm)": round(od_total, 2),
-            "Sugerencia": ANCHOS_CHAROLA_MM[ancho_mm], "% Llenado": f"{round(llenado, 2)}%"
+        res_t.append({
+            "CHAROLA": tray, "Suma Diámetros (mm)": round(od_sum, 2),
+            "Sugerencia Comercial": ANCHOS_CHAROLA_MM[ancho_mm],
+            "% Llenado": f"{round(llenado, 2)}%"
         })
-    st.table(res_tray)
+    st.table(res_t)
+
+    towrite = io.BytesIO()
+    df.to_excel(towrite, index=False, engine='openpyxl')
+    st.download_button("📥 Descargar Reporte Final (Excel)", towrite.getvalue(), file_name="SOCEMB_Reporte.xlsx")
