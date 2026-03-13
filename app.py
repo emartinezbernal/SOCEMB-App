@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 
-# --- 1. BASE DE DATOS TÉCNICA OKONITE C-L-X (3/C + TIERRA VFD) ---
+# --- 1. BASE DE DATOS TÉCNICA OKONITE C-L-X ---
 DATOS_OKONITE = {
     "14 AWG": {"60C": 15, "75C": 20, "90C": 25, "area_mm2": 206, "od_mm": 16.3, "cat": "546-31-3403", "grd": "1x#14", "short_1s": 1.5},
     "12 AWG": {"60C": 20, "75C": 20, "90C": 30, "area_mm2": 239, "od_mm": 17.5, "cat": "546-31-3453", "grd": "1x#12", "short_1s": 2.4},
@@ -20,89 +20,86 @@ DATOS_OKONITE = {
     "500 kcmil": {"60C": 320, "75C": 380, "90C": 430, "area_mm2": 2761, "od_mm": 59.3, "cat": "571-31-3244", "grd": "3x#4", "short_1s": 184.8}
 }
 
-# Resistencia en Ohm/km para Caída de Tensión (Cobre)
 RES_CU_METRICO = {"14 AWG": 10.2, "12 AWG": 6.6, "10 AWG": 3.9, "8 AWG": 2.5, "6 AWG": 1.6, "4 AWG": 1.0, "2 AWG": 0.62, "1/0": 0.39, "2/0": 0.31, "3/0": 0.25, "4/0": 0.20, "250 kcmil": 0.17, "350 kcmil": 0.13, "500 kcmil": 0.089}
 ANCHOS_CHAROLA_MM = {152.4: "6 in", 228.6: "9 in", 304.8: "12 in", 457.2: "18 in", 609.6: "24 in", 762.0: "30 in", 914.4: "36 in"}
 
 st.set_page_config(page_title="SOCEMB vFinal", layout="wide")
 if 'db' not in st.session_state: st.session_state.db = []
 
-st.title("⚡ SOCEMB: Ingeniería de Cables (Versión Final Unificada)")
+st.title("⚡ SOCEMB: Ingeniería de Cables y Análisis de Llenado")
 
-# --- 2. ENTRADA DE DATOS (SIDEBAR) ---
+# --- 2. ENTRADA DE DATOS ---
 with st.sidebar:
-    st.header("📋 Identificación")
-    tag = st.text_input("Tag del Circuito", "M-101")
+    st.header("🆔 Circuito")
+    tag = st.text_input("Tag", "M-101")
     origen = st.text_input("Origen", "MCC-A")
-    destino = st.text_input("Destino", "Bomba-01")
-    trayectoria = st.text_input("ID Trayectoria (Charola)", "CH-01")
+    destino = st.text_input("Destino", "Motor-01")
+    trayectoria = st.text_input("ID Trayectoria", "CH-01")
     
-    st.header("⚙️ Parámetros Eléctricos")
-    hp = st.number_input("Potencia (HP)", value=150.0)
+    st.header("⚙️ Eléctrico")
+    hp = st.number_input("HP", value=150.0)
     v = st.selectbox("Voltaje (V)", [440, 460, 480], index=1)
     dist = st.number_input("Distancia (m)", value=50)
-    i_sc = st.number_input("I Corto Circuito (kA)", value=10.0)
-    t_falla = st.number_input("Tiempo de Falla (s)", value=0.1)
+    i_sc = st.number_input("Isc (kA)", value=10.0)
+    t_falla = st.number_input("t (s)", value=0.1)
     
-    st.header("🌍 Factores")
-    t_amb = st.select_slider("Temp. Ambiente (°C)", options=[30, 35, 40, 45, 50], value=40)
-    agrup = st.number_input("Conductores en Grupo", value=3)
+    st.header("🌍 Ajustes")
+    t_amb = st.select_slider("Temp (°C)", options=[30, 35, 40, 45, 50], value=40)
+    agrup = st.number_input("Agrupamiento", value=3)
 
-# --- 3. CÁLCULOS TÉCNICOS ---
+# --- 3. CÁLCULO ACTUAL ---
 f_t = {30: 1.0, 35: 0.94, 40: 0.88, 45: 0.82, 50: 0.75}.get(t_amb, 1.0)
 f_a = 1.0 if agrup <= 3 else (0.8 if agrup <= 6 else 0.7)
 i_nom = (hp * 746) / (v * 1.732 * 0.85 * 0.90)
 i_dis = i_nom * 1.25
 
-def seleccionar_cable():
+def realizar_calculo():
     for cal, d in DATOS_OKONITE.items():
         lim_term = d["60C"] if i_dis <= 100 else d["75C"]
         cap_adj = d["90C"] * f_t * f_a
         vd = (1.732 * i_nom * dist * RES_CU_METRICO[cal]) / (v * 10)
-        isc_cable = d["short_1s"] / (t_falla ** 0.5)
+        isc_c = d["short_1s"] / (t_falla ** 0.5)
         
-        if i_dis <= lim_term and i_dis <= cap_adj and vd <= 3.0 and i_sc <= isc_cable:
-            return cal, d["cat"], d["grd"], round(vd, 2), d["od_mm"], round(isc_cable, 2), d["area_mm2"]
-    return "N/A", "N/A", "N/A", 0, 0, 0, 0
+        if i_dis <= lim_term and i_dis <= cap_adj and vd <= 3.0 and i_sc <= isc_c:
+            return cal, d["cat"], d["grd"], round(vd, 2), d["od_mm"], round(isc_c, 2)
+    return "N/A", "N/A", "N/A", 0, 0, 0
 
-calibre, cat, grd, vd_res, od_m, isc_c, area_m = seleccionar_cable()
+cal, cat, grd, vd_r, od_m, isc_res = realizar_calculo()
 
-# --- 4. VISUALIZACIÓN DE CÁLCULO ACTUAL ---
-col1, col2, col3 = st.columns(3)
-with col1: st.metric("Ampacidad Diseño", f"{round(i_dis, 2)} A")
-with col2: st.metric("Modelo Seleccionado", calibre)
-with col3: st.metric("Caída de Tensión", f"{vd_res}%")
+# Visualización inmediata de la selección
+c1, c2, c3 = st.columns(3)
+c1.metric("Ampacidad Requerida", f"{round(i_dis, 2)} A")
+c2.metric("Cable Seleccionado", cal)
+c3.metric("Caída de Tensión", f"{vd_r}%")
 
-st.info(f"**Referencia Catálogo:** Okonite C-L-X MC-HL #{cat}")
-
-if st.button("➕ Agregar al Cable Schedule"):
+if st.button("➕ Agregar al Schedule"):
     st.session_state.db.append({
         "TAG": tag, "ORIGEN": origen, "DESTINO": destino, "TRAYECTORIA": trayectoria,
-        "I_DIS (A)": round(i_dis, 2), "CALIBRE": calibre, "CATÁLOGO": cat,
-        "OD_MM": od_m, "AREA_MM2": area_m, "VD_PORC": vd_res, "ISC_KA": isc_c
+        "I_DIS (A)": round(i_dis, 2), "CALIBRE": cal, "OD_MM": od_m, "CATÁLOGO": cat,
+        "CABLE": f"3/C Cu + {grd} GRD CLX", "VD_PORC": vd_r, "ISC_MAX_KA": isc_res
     })
 
-# --- 5. REPORTES CONSOLIDADOS ---
+# --- 4. REPORTES ---
 if st.session_state.db:
     df = pd.DataFrame(st.session_state.db)
-    
     st.subheader("📋 Cable Schedule")
     st.dataframe(df)
     
-    st.subheader("📊 Llenado de Charolas (Unidad Principal: mm)")
-    res_charolas = []
+    st.subheader("📊 Análisis de Trayectorias y % de Llenado")
+    res_tray = []
     for tray, gp in df.groupby("TRAYECTORIA"):
-        # Regla Combinada: Suma de diámetros para asegurar monocapa
-        od_sum = gp["OD_MM"].sum()
-        ancho_sug = next((a for a in ANCHOS_CHAROLA_MM if a >= od_sum), 914.4)
+        od_acumulado = gp["OD_MM"].sum()
+        # Selección de charola comercial
+        ancho_escogido_mm = next((a for a in ANCHOS_CHAROLA_MM if a >= od_acumulado), 914.4)
         
-        res_charolas.append({
+        # Cálculo del % de llenado (basado en ancho lineal para monocapa)
+        porcentaje_llenado = (od_acumulado / ancho_escogido_mm) * 100
+        
+        res_tray.append({
             "CHAROLA": tray,
-            "Ancho Requerido (mm)": round(od_sum, 2),
-            "Ancho Sugerido": f"{ANCHOS_CHAROLA_MM[ancho_sug]} ({ancho_sug} mm)"
+            "Ancho Requerido (mm)": round(od_acumulado, 2),
+            "Charola Sugerida": ANCHOS_CHAROLA_MM[ancho_escogido_mm],
+            "Ancho Nominal (mm)": ancho_escogido_mm,
+            "% Llenado Estimado": f"{round(porcentaje_llenado, 2)}%"
         })
-    st.table(res_charolas)
-
-    towrite = io.BytesIO()
-    df.to_excel(towrite, index=False, engine='openpyxl')
-    st.download_button("📥 Descargar Reporte Excel", towrite.getvalue(), file_name="SOCEMB_Final.xlsx")
+    st.table(res_tray)
